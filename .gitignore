@@ -1,0 +1,31 @@
+# /data1-backed trees (symlinks, never tracked)
+/data
+/venvs
+
+# Per-environment compatibility symlinks created by arb_link_venv. They point into /venvs,
+# which is itself a symlink onto the data disk, so they are machine-specific and meaningless
+# in a clone.
+arbiter/sim/.venv
+arbiter/policy/gr00t/.venv
+arbiter/rl/.venv
+
+# python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+.ruff_cache/
+
+# vendored upstream checkouts: 1.6G of third-party code, pinned and documented in
+# third_party/PINNED.md rather than tracked here
+/third_party/*
+!/third_party/PINNED.md
+
+# isaac / usd scratch
+*.usda.bak
+.thumbs/
+_isaac_sim
+
+# editor / os
+.DS_Store
+*.swp

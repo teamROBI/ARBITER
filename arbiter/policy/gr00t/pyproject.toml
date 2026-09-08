@@ -1,0 +1,14 @@
+[build-system]
+requires = ["setuptools>=67", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "arbiter-policy"
+version = "0.1.0"
+description = "ARBITER GR00T 1.6 policy-serving environment (CUDA 12.1, Ubuntu 20.04)"
+requires-python = "==3.10.*"
+dependencies = [
+    "torch==2.5.1",
+    "torchvision==0.20.1",
+    "torchaudio==2.5.1",
+]

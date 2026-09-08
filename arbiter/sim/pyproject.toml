@@ -1,0 +1,56 @@
+[build-system]
+requires = ["setuptools>=61.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "arbiter-sim"
+version = "0.1.0"
+description = "ARBITER Isaac-side simulation environment: Isaac Lab runtime for the arbitration cells"
+requires-python = ">=3.11"
+dependencies = [
+    "isaaclab",
+    "isaaclab_assets",
+    "isaaclab_tasks",
+    "torch==2.7.0",
+    "torchvision==0.22.0",
+    "opencv-python>=4.8",
+    "h5py>=3.10",
+    # ZMQ transport for the GR00T policy client. The sim venv (py3.11, Isaac Lab) and the
+    # gr00t venv (py3.10) cannot import each other, which is *why* the policy is a server;
+    # eval_policy.py therefore re-implements the wire protocol on this side.
+    "msgpack==1.1.0",
+    "msgpack-numpy==0.4.8",
+    "pyzmq==27.0.1",
+    "loguru>=0.7",
+    "rich>=13.7",
+]
+
+# Deliberately NOT inherited from TANGO's sim environment:
+#   robotis_dds_python, cyclonedds  -- ROBOTIS hardware teleop bindings. ARBITER is sim-only
+#     single-arm Franka with no real-robot path, and nothing in this repo imports DDS (checked:
+#     the only references were CYCLONEDDS_* env exports in activate_sim_env.sh, now removed).
+#     Dropping them also removes a from-source cmake build from the setup script.
+#   trimesh -- only create_assets.py's optional GLB export, which runs under Isaac's bundled
+#     kit python rather than this venv and already skips gracefully when trimesh is absent.
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.0",
+    "ruff>=0.11.0",
+]
+
+[tool.uv]
+compile-bytecode = true
+package = false
+
+[tool.uv.sources]
+isaaclab = { path = "../../third_party/IsaacLab/source/isaaclab", editable = true }
+isaaclab_assets = { path = "../../third_party/IsaacLab/source/isaaclab_assets", editable = true }
+isaaclab_tasks = { path = "../../third_party/IsaacLab/source/isaaclab_tasks", editable = true }
+torch = [{ index = "pytorch-cu128" }]
+torchvision = [{ index = "pytorch-cu128" }]
+
+[[tool.uv.index]]
+name = "pytorch-cu128"
+url = "https://download.pytorch.org/whl/cu128"
+explicit = true
