@@ -43,7 +43,11 @@ export PYTHONPATH="${REPO_ROOT}:${REPO_ROOT}/arbiter/policy/gr00t:${PWD}"
 export CUDA_VISIBLE_DEVICES="${GPU}"
 export LOGURU_LEVEL="${LOGURU_LEVEL:-INFO}"
 
-exec "${VENV}" - "$@" <<'PY'
+# "${CKPT}", not "$@": the resolution above rewrites the variable, but the original positional
+# argument is what reaches python if "$@" is forwarded. That was the whole bug -- the -d check
+# and the echo used the resolved path while transformers got the relative one, so the guard
+# passed and the failure surfaced as an unrelated HFValidationError about a repo id.
+exec "${VENV}" - "${CKPT}" <<'PY'
 import os
 import sys
 

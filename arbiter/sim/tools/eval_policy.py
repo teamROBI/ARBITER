@@ -176,6 +176,17 @@ _parser.add_argument("--cag-null-validated", action="store_true",
                           "dropout, so the null instruction is in-distribution. Required for "
                           "--cag-omega != 1; without it a guidance sweep measures a difference "
                           "against out-of-distribution noise.")
+#: Deliver per-phase text during the rollout instead of one constant sentence.
+#:
+#: Defaults on whenever the language channel is `sub_task`, because that is the only way such a
+#: checkpoint is in distribution -- it was trained on phase-appropriate text and one constant
+#: sentence on that key is a string it never saw. Pass --no-phase-language to measure that
+#: mismatch deliberately rather than by accident.
+_parser.add_argument("--phase-language", dest="phase_language", action="store_true",
+                     default=None, help="advance the instruction on gripper transitions "
+                                        "(default: on for the sub_task channel)")
+_parser.add_argument("--no-phase-language", dest="phase_language", action="store_false",
+                     help="send one constant sentence even on the sub_task channel")
 _parser.add_argument("--out", default="data/output/eval")
 
 from isaaclab.app import AppLauncher  # noqa: E402
@@ -196,12 +207,20 @@ args_cli.enable_cameras = True
 # the same reason; neither touches Isaac.
 from arbiter.suites import cells as ARB_CELLS  # noqa: E402
 from arbiter.suites.spec import lang_obs_key as _lang_obs_key  # noqa: E402
+from arbiter.suites.spec import sub_instructions_from_attrs  # noqa: E402
 
 #: Which language channel the observation carries, from ARBITER_LANG_KEY. Load-bearing for the
 #: cells: three of the four are only interpretable on `sub_task`, because topology's task-level
 #: instruction never names a side.
 LANGUAGE_CHANNEL = os.environ.get("ARBITER_LANG_KEY", "task").strip().lower()
 LANGUAGE_KEY = _lang_obs_key(LANGUAGE_CHANNEL)
+
+#: Whether to advance the instruction per phase. On by default for `sub_task`, because a
+#: checkpoint trained on phase-appropriate text is out of distribution when fed one constant
+#: sentence on that key -- which is what made the first two attempts to evaluate one score
+#: 0 success. Off for `task`, whose training language really is one sentence per episode.
+PHASE_LANGUAGE = (LANGUAGE_CHANNEL == "sub_task") if args_cli.phase_language is None \
+    else bool(args_cli.phase_language)
 
 
 def _resolve_cell_flags() -> None:
@@ -279,7 +298,11 @@ def _resolve_cell_flags() -> None:
     params = {"barrier_h": float(args_cli.barrier_h),
               "barrier_offset": float(args_cli.barrier_offset)}
     phases = ARB_CELLS.spoken_sub_tasks(name, arm.name, params)
-    args_cli.speak = phases[1]
+    # Keep the whole list. Collapsing it to the middle phase and speaking that from step 0 is
+    # what made the first two evaluation attempts uninterpretable: the policy heard carry-text
+    # during the reach, scored 0 success, and lifted over the barrier where it should have gone
+    # around. PhaseSpeaker delivers them in order instead.
+    args_cli.cell_phases = phases
 
     kind, want = ARB_CELLS.expected(name, arm.name, params)
     print(f"[EVAL] CELL {name} arm={arm.name} authority={cell.authority} "
@@ -313,6 +336,7 @@ import numpy as np  # noqa: E402
 from arbiter.collect import constants as K  # noqa: E402
 from arbiter.collect import success as S  # noqa: E402
 from arbiter.policy import cag as CAG  # noqa: E402
+from arbiter.policy.phase_speaker import PhaseSpeaker  # noqa: E402
 from arbiter.sim.env.isaac_backend import IsaacMotionBackend  # noqa: E402
 from arbiter.sim.env.scene import (  # noqa: E402
     HOME_JOINT_POS,
@@ -515,6 +539,7 @@ def decode_chunk(chunk: dict, t: int) -> list[float]:
             v = v[0]
         out.append(float(v[t][0] if v.ndim == 2 else v[t]))
     return out
+
 
 
 class ZmqPolicyClient:
@@ -746,6 +771,17 @@ def evaluate(scene, sim, info, backend, policy, cond, cams, ep: int) -> dict:
         spoken = _instruction_of(axis_name, args_cli.swap_instruction)
     if args_cli.speak is not None:
         spoken = args_cli.speak
+
+    # Per-phase delivery. The texts come from the cell when one is selected, otherwise from the
+    # spec's own phase list for this condition -- never formatted here, so what is spoken is a
+    # string the training set contains.
+    speaker: PhaseSpeaker | None = None
+    if PHASE_LANGUAGE:
+        phase_texts = getattr(args_cli, "cell_phases", None)
+        if phase_texts is None:
+            phase_texts = sub_instructions_from_attrs(cond.to_attrs())
+        speaker = PhaseSpeaker(phase_texts)
+        spoken = speaker.text()
     # (step -> instruction), sorted. Empty unless --instruction-schedule was given, in which
     # case `spoken` is recomputed at each chunk boundary rather than fixed for the episode.
     schedule = _parse_schedule(axis_name, args_cli.instruction_schedule)
@@ -773,10 +809,19 @@ def evaluate(scene, sim, info, backend, policy, cond, cams, ep: int) -> dict:
                     if nxt != spoken:
                         spoken = nxt
                         spoken_log.append((steps, spoken))
+            if speaker is not None:
+                nxt = speaker.text()
+                if nxt != spoken:
+                    spoken = nxt
+                    spoken_log.append((steps, spoken))
             obs = build_observation(scene, backend, cams, spoken)
             chunk = policy.get_action(obs)
             horizon = 0
-        backend.movej(*_split(decode_chunk(chunk, horizon)))
+        _act = decode_chunk(chunk, horizon)
+        backend.movej(*_split(_act))
+        if speaker is not None:
+            # The COMMANDED gripper, which is what sub_task_spans segmented on.
+            speaker.observe(_act[-1])
         horizon += 1
         backend.step()
         if steps % 4 == 0:                      # ~7.5 Hz, plenty for a route classification
@@ -1005,6 +1050,8 @@ def main() -> int:
     provenance = {
         "language_channel": LANGUAGE_CHANNEL,
         "language_obs_key": LANGUAGE_KEY,
+        "phase_language": PHASE_LANGUAGE,
+        "phase_lead_frames": 0,   # training used horizon//2 = 8; see PhaseSpeaker on why not here
         "cag_omega": args_cli.cag_omega,
         "cag_null_validated": bool(args_cli.cag_null_validated),
     }

@@ -82,7 +82,7 @@ def _representative_condition(axis_name: str):
     condition the stage does not represent -- the same mismatch assert_condition_realised exists
     to catch during collection.
     """
-    from arbiter.suites.spec import AXES, enumerate_conditions, object_keys_for
+    from arbiter.suites.spec import enumerate_conditions, object_keys_for
 
     keys = object_keys_for(axis_name)
     for splits in (("test",), ("train", "test")):
