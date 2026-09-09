@@ -160,6 +160,41 @@ class Axis:
     notes: str = ""
 
 
+#: Asset-name prefixes normalised out of the seed. See `episode_seed`.
+_ASSET_PREFIXES = ("arb_", "tango_")
+
+
+def normalise_condition_key(condition_key: str) -> str:
+    """Strip the project's asset-name prefix from a condition key.
+
+    A `Condition.key()` ends in ``@<object_key>``, and the object key carries whichever prefix
+    the project names its USD assets with -- ``arb_cube_red`` here, ``tango_cube_red`` upstream.
+    That prefix is a naming convention, not part of the condition's physical identity: the same
+    barrier height, the same offset and the same 5 cm red cube describe the same condition
+    whatever the file is called.
+
+    Normalising it matters because `episode_seed` hashes this string, so an otherwise cosmetic
+    rename silently redraws every initial condition. Measured: renaming ``tango_cube_red`` to
+    ``arb_cube_red`` changed all six seeds at one height and moved the jittered home pose by up
+    to 0.053 rad (3.06 deg) per joint. The first fidelity-gate run then scored 4/6 against
+    upstream's 6/6 -- which looked like scene drift and was actually a different draw.
+
+    With the prefix normalised, a replication runs the *same* initial conditions as the run it
+    reproduces, so any remaining difference is real.
+
+    Adding a new prefix means adding it to `_ASSET_PREFIXES`; that is deliberate, since silently
+    stripping an unknown leading token would turn ``cube_red`` into ``red``.
+    """
+    head, sep, obj = condition_key.rpartition("@")
+    if not sep:
+        return condition_key
+    for pref in _ASSET_PREFIXES:
+        if obj.startswith(pref):
+            obj = obj[len(pref):]
+            break
+    return f"{head}@{obj}"
+
+
 def enumerate_conditions(
     axis: Axis,
     object_keys: list[str],

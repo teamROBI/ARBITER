@@ -27,6 +27,7 @@ from isaaclab_assets.robots.franka import FRANKA_PANDA_HIGH_PD_CFG
 from arbiter.collect.grasp import mat_to_quat
 from arbiter.collect.constants import ROUTE_AROUND_MARGIN_M
 from arbiter.suites.spec import (  # noqa: E402
+    normalise_condition_key,  # noqa: E402
     AXES,
     ORDER_OBJECT_POS,
     WORKSPACE,
@@ -93,10 +94,15 @@ def jittered_home(seed: int, scale: float = HOME_JITTER_RAD) -> list[float]:
 
 
 def episode_seed(condition_key: str, repeat: int) -> int:
-    """Stable seed for one (condition, repeat). ``hash()`` is salted per process, so not that."""
+    """Stable seed for one (condition, repeat). ``hash()`` is salted per process, so not that.
+
+    The key is normalised first, so the seed depends on the condition rather than on what the
+    project happens to call its assets -- see `normalise_condition_key`.
+    """
     import hashlib
 
-    h = hashlib.sha256(f"{condition_key}#{repeat}".encode()).digest()
+    key = normalise_condition_key(condition_key)
+    h = hashlib.sha256(f"{key}#{repeat}".encode()).digest()
     return int.from_bytes(h[:8], "big")
 
 #: Clearance so a spawned object rests on the surface rather than interpenetrating it.

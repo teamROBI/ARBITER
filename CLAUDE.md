@@ -303,7 +303,48 @@ other omega unless the caller asserts an instruction-dropout checkpoint, because
 instruction on a normally-trained checkpoint is out of distribution (TANGO: 0/6 with no obstacle
 at all) and a tradeoff curve built against it would be an artifact.
 
-### The fidelity gate's expected numbers, corrected
+### Phase 0.3 PASSED — the copied scene is the scene the checkpoints were trained on
+
+Run 2026-09-09 against `n1d7_rel_v7-checkpoint-4000` on the `task` channel:
+
+| grid | n | success | route-correct | lanes |
+|---|---|---|---|---|
+| control (0.08–0.13) | 36 | **36/36** | 36/36 `around` | all `-y` |
+| sweep (0.03–0.12, crossing `h*`) | 36 | **36/36** | 36/36 | `over` below `h*`, `around` at/above |
+
+The class flips exactly at `h* = 0.08`. So the borrowed checkpoints are valid on this scene and
+the arbitration cells can be run against it.
+
+### Why the gate is distributional, not an identical-rollout replication
+
+The first run scored **4/6** at h=0.08 against upstream's 6/6, which read as scene drift. It was
+not. `episode_seed` hashes the condition key and `Condition.key()` ends in `@<object_key>`, so
+renaming assets `tango_* → arb_*` **redrew every initial condition** — measured at up to
+0.053 rad (3.06°) per joint of home-pose jitter.
+
+Normalising the prefix out of the seed (now done, `spec.normalise_condition_key`) stops a future
+rename from doing that again, but it does **not** buy replication: the normalised seed matches
+neither original, because upstream seeded off a string this repo deliberately does not contain,
+and upstream's eval records do not store their seeds. Identical rollouts are unavailable.
+
+So the gate splits two things the first version conflated:
+
+- **Geometric — asserted exactly.** Route class per height, the lane of every `around` crossing,
+  and the flip at `h*`. These are properties of the scene; a 3° start-pose difference does not
+  move a route from around-left to around-right, but a drifted prop dimension does.
+- **Motor — reported against a stated floor** (80% success, 85% crossing). Jitter-sensitive,
+  most of all at `h*` where the required route changes. The floors are a judgement call and the
+  code says so.
+
+The evidence now supports the split from two independent draws: the geometric signal was clean in
+**both** (every crossing `around` on `-y`) while the motor number moved 4/6 → 6/6. h=0.08 is
+genuinely jitter-sensitive.
+
+Validated in four configurations before it was trusted: passes on upstream's stored v7 data,
+fails on the v7 blocker arm with seven specific findings, fails on empty inputs, and reports the
+aborted single-height run as geometrically clean but below the motor floors at n=6.
+
+### The expected numbers, corrected
 
 The plan and the write-up quote **18/18 LEFT ×18** and **20/20 route-correct**. Those are
 *subsets*. Read off TANGO's stored eval JSONs, the full grids are:
@@ -332,58 +373,25 @@ the whole budget or lifted over the middle, which the blocker cannot seal.
 the side denominator rather than scoring them as "wrong lane". Scoring them as failures would
 invent a decision the policy never made — and ACT does exactly this at every height.
 
-**Phase 0.3 blocked on GPUs.** A TANGO fine-tune (`n1d7_rel_v7_seed1234`, the seed-1234
-replication) holds all four A6000s at ~44.8/49.1 GiB. It saves every ~29 min.
-`scripts/bench/fidelity_gate.sh` refuses to start unless the emptiest GPU has 20 GB free, because
-an OOM mid-gate looks exactly like the copy having drifted.
+**Phase 0.3 done.** The TANGO fine-tune (`n1d7_rel_v7_seed1234`) completed 4000/4000 and freed
+the GPUs; the gate ran and passed. `scripts/bench/fidelity_gate.sh` still refuses to start unless
+the emptiest GPU has 20 GB free, because an OOM mid-gate looks exactly like the copy having
+drifted.
 
-### Phase 0 runbook
+### Next: 0.4, the free result
 
-Everything below is written and validated as far as it can be without a GPU. The order matters:
-each step's failure mode is cheaper to discover than the next step's.
+`n1d7_rel_v8_subtask-checkpoint-4000` is copied and has still never been evaluated on the
+arbitration cells. It is the prerequisite for L-AUTH, CONFLICT-VF and CONFLICT-VT, since only the
+`sub_task` channel grounds a lane. Run it at `OMEGAS=1` — no dropout checkpoint is needed for the
+`omega = 1` column, which short-circuits to the conditional policy with a single forward pass.
 
-```bash
-# 0.3  copy fidelity -- reproduce TANGO's v7 control and height sweep on ARBITER's own scene
-bash scripts/bench/fidelity_gate.sh
-#      validated both ways against TANGO's stored data: PASSES on the v7 control,
-#      FAILS on the v7 blocker arm and on empty dirs
+Then 0.5 (`train_dropout.sh`) and 0.7 (the full omega sweep).
 
-# 0.4  the free result -- the per-phase-language checkpoint, never evaluated on DETOUR
-ARBITER_LANG_KEY=sub_task bash scripts/bench/omega_sweep.sh   # with OMEGAS=1
-#      CKPT=data/checkpoints/n1d7_rel_v8_subtask-checkpoint-4000
+### Two process traps hit while getting here, both already documented
 
-# 0.5  instruction-dropout retrain -- the only new training in Phase 0
-bash scripts/bench/train_dropout.sh
+Worth noting that documenting them was not enough — the safe forms should be encapsulated:
 
-# 0.7  the go/no-go: sweep omega across the whole four-cell table
-CKPT=<dropout checkpoint> bash scripts/bench/omega_sweep.sh
-
-# scoring
-python scripts/bench/score_arbitration.py --dir data/output/eval/omega_sweep
-```
-
-Both launchers refuse to start when the GPUs are occupied (checked: they exit 1 with the memory
-table). `train_dropout.sh` runs its cheap checks first — sub_task coverage, then language
-fidelity — so a dataset problem surfaces in seconds rather than hours in.
-
-### The language half of fidelity is already answered
-
-`scripts/bench/check_language_fidelity.py` re-derives every instruction in a dataset from the
-spec and compares. On `data/datasets/lerobot_merged/arbiter_v8_subtask` (615 episodes, copied
-from TANGO and 51M in total): **615/615 identical at task level and 615/615 at phase level.**
-
-So ARBITER's copied spec reproduces the language those checkpoints were trained with, byte for
-byte. Only the visual/physics half of fidelity is still waiting on a GPU.
-
-Getting there exposed a trap worth keeping. `_obj_phrase` strips the project prefix, and the
-curated dictionary is keyed on `arb_*`, so a TANGO-collected sidecar renders `tango_cube_red` as
-**"red tango cube"** — a phrase no annotator would write and nothing at inference reproduces. It
-is silent, and it would go into every re-derived instruction. The copied dataset's sidecar was
-therefore rewritten to `arb_conditions.jsonl` with `arb_*` keys, leaving the `task` strings
-untouched because those define the task-index partition. The checker refuses a dataset that
-still carries the old prefix.
-
-### Not yet done
-
-The GPU-dependent steps: the 0.3 gate run, the 0.4 v8 evaluation, the 0.5 retrain, the 0.7 sweep.
-Nothing has been committed yet.
+1. `pkill` sends SIGTERM, which Isaac's ~200 non-daemon threads ignore. A stray `eval_policy.py`
+   survived a "successful" pkill and held GPU memory for 1h43m. Use `kill -9`.
+2. `pgrep -f <pattern>` matches its own command line, so it reported a finished trainer as
+   "still present". Match a bracketed pattern (`launch_finetun[e]`) or check PIDs directly.
