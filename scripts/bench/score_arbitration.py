@@ -174,15 +174,33 @@ def main() -> int:
                       f"no paired effect. Compliance on one arm cannot separate obedience from "
                       f"habit.")
                 continue
-            rates = {}
-            for a, t in have.items():
-                d = t["n"] - t["no_lane"]
-                rates[a] = t["compliant"] / d if d else float("nan")
+            # The paired effect must hold the BEHAVIOUR fixed and vary the instruction:
+            #
+            #     P(lane = X | instruction says X) - P(lane = X | instruction says not-X)
+            #
+            # Subtracting the two arms' *compliance* rates instead is wrong, and wrong in the
+            # worst direction: each arm is scored against a different target, so a policy that
+            # ignores language completely scores 100% on one arm and 0% on the other and the
+            # difference prints as +-100% -- a perfect effect, from a total null. Fixing one
+            # outcome and asking how its frequency moves with the instruction gives 0% there,
+            # which is the truth.
             lo, hi = naming[0], naming[1]
-            effect = rates[hi] - rates[lo]
-            print(f"[PAIRED] {cell_name} (w={omega:g}): {hi} {rates[hi]:.1%} vs "
-                  f"{lo} {rates[lo]:.1%}  ->  causal effect of the instruction = "
-                  f"{effect:+.1%}")
+            target = C.cell(cell_name).arm(hi).expect_value
+            fracs = {}
+            for a in (hi, lo):
+                t = have[a]
+                d = t["n"] - t["no_lane"]
+                fracs[a] = (t["sides"].get(target, 0) / d) if d else float("nan")
+            effect = fracs[hi] - fracs[lo]
+            print(f"[PAIRED] {cell_name} (w={omega:g}): "
+                  f"P(lane={target} | asked for it) = {fracs[hi]:.1%}, "
+                  f"P(lane={target} | asked for the other) = {fracs[lo]:.1%}")
+            print(f"          causal effect of the instruction on lane choice = {effect:+.1%}"
+                  f"{'   <-- language does not steer' if abs(effect) < 0.05 else ''}")
+            for a in (hi, lo):
+                t = have[a]
+                print(f"          {a:<12s} compliance {t['compliant']}/"
+                      f"{t['n'] - t['no_lane']}  lanes {dict(t['sides'])}")
 
     if not cells_seen:
         print("[FAIL] no cell-tagged runs found; nothing to score", file=sys.stderr)

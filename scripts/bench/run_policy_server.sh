@@ -25,6 +25,10 @@ if [[ -z "${CKPT}" ]]; then
     ls -d "${REPO_ROOT}"/data/output/train/*/*/checkpoint-* 2>/dev/null | sed 's/^/          /' >&2
     exit 1
 fi
+# Resolve a relative path against the repo root. Without this, transformers takes a relative
+# path for a HuggingFace repo id and dies in validate_repo_id -- which reads as a corrupt
+# checkpoint rather than a path mistake, several stack frames deep inside huggingface_hub.
+[[ "${CKPT}" = /* ]] || CKPT="${REPO_ROOT}/${CKPT}"
 [[ -d "${CKPT}" ]] || { echo "[ERROR] no such checkpoint: ${CKPT}" >&2; exit 1; }
 
 VENV="${REPO_ROOT}/venvs/gr00t/bin/python"
